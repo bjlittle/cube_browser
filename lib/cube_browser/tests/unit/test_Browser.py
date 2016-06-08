@@ -33,7 +33,7 @@ class Test__build_mappings__cache(tests.IrisTest):
         self.patch('ipywidgets.VBox')
         self.patch('ipywidgets.HBox')
         self.patch('ipywidgets.Label')
-        self.patch('cube_browser.Browser.on_change')
+        self.patch('cube_browser.Browser._slider_on_change')
 
     def test_shared_cache(self):
         c1 = Contour(self.cube, self.axes)
@@ -69,7 +69,7 @@ class Test__build_mappings(tests.IrisTest):
         self.patch('ipywidgets.VBox')
         self.patch('ipywidgets.HBox')
         self.patch('ipywidgets.Label')
-        self.patch('cube_browser.Browser.on_change')
+        self.patch('cube_browser.Browser._slider_on_change')
 
     def _tidy(self, coord):
         coord = coord.copy()
@@ -289,7 +289,7 @@ class Test__build_mappings(tests.IrisTest):
             Browser([c1, c2])
 
 
-class Test_on_change(tests.IrisTest):
+class Test__slider_on_change(tests.IrisTest):
     def setUp(self):
         self.cube = realistic_3d()
         self.axes = mock.sentinel.axes
@@ -304,10 +304,11 @@ class Test_on_change(tests.IrisTest):
 
     def test(self):
         plot = Contour(self.cube, self.axes)
-        with mock.patch('cube_browser.Browser.on_change') as on_change:
+        method = 'cube_browser.Browser._slider_on_change'
+        with mock.patch(method) as slider_on_change:
             browser = Browser(plot)
             browser.display()
-            on_change.assert_called_once_with(None)
+            slider_on_change.assert_called_once_with(None)
 
     def test_single_plot_with_no_axis(self):
         cube = self.cube[0]
@@ -328,7 +329,7 @@ class Test_on_change(tests.IrisTest):
             # Now simulate a slider change.
             slider = browser._slider_by_name['time']
             change = dict(owner=slider)
-            browser.on_change(change)
+            browser._slider_on_change(change)
             self.assertEqual(func.call_count, 2)
             expected = [mock.call(time=self.value),
                         mock.call(time=self.value)]
@@ -345,7 +346,7 @@ class Test_on_change(tests.IrisTest):
             # Now simulate a slider change.
             slider = browser._slider_by_name['wibble']
             change = dict(owner=slider)
-            browser.on_change(change)
+            browser._slider_on_change(change)
             self.assertEqual(func.call_count, 2)
             expected = [mock.call(wibble=self.value),
                         mock.call(wibble=self.value)]
@@ -376,7 +377,7 @@ class Test_on_change(tests.IrisTest):
             # Now simulate a slider change.
             slider = browser._slider_by_name['grid_longitude']
             change = dict(owner=slider)
-            browser.on_change(change)
+            browser._slider_on_change(change)
             self.assertEqual(func.call_args_list, expected * 4)
 
     def test_two_plots_with_shared_axis_and_independent_axis(self):
@@ -396,14 +397,14 @@ class Test_on_change(tests.IrisTest):
             # Now simulate a 'time' slider change.
             slider = browser._slider_by_name['time']
             change = dict(owner=slider)
-            browser.on_change(change)
+            browser._slider_on_change(change)
             self.assertEqual(func.call_count, 4)
             expected *= 2
             func.assert_has_calls(expected)
             # Now simulate a 'model_level_number' slider change.
             slider = browser._slider_by_name['model_level_number']
             change = dict(owner=slider)
-            browser.on_change(change)
+            browser._slider_on_change(change)
             self.assertEqual(func.call_count, 5)
             expected.append(mock.call(time=self.value,
                                       model_level_number=self.value))
@@ -425,14 +426,14 @@ class Test_on_change(tests.IrisTest):
             # Now simulate a 'time' slider change.
             slider = browser._slider_by_name['time']
             change = dict(owner=slider)
-            browser.on_change(change)
+            browser._slider_on_change(change)
             self.assertEqual(func.call_count, 3)
             expected.append(mock.call(time=self.value))
             func.assert_has_calls(expected)
             # Now simulate a 'model_level_number' slider change.
             slider = browser._slider_by_name['model_level_number']
             change = dict(owner=slider)
-            browser.on_change(change)
+            browser._slider_on_change(change)
             self.assertEqual(func.call_count, 4)
             expected.append(mock.call(model_level_number=self.value))
             func.assert_has_calls(expected)
@@ -453,7 +454,7 @@ class Test_on_change(tests.IrisTest):
             # Now simulate a slider change.
             slider = browser._slider_by_name['wibble']
             change = dict(owner=slider)
-            browser.on_change(change)
+            browser._slider_on_change(change)
             self.assertEqual(func.call_count, 4)
             expected *= 2
             func.assert_has_calls(expected)

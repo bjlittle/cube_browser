@@ -272,7 +272,7 @@ class Explorer(traitlets.HasTraits):
                 title = cube.name().replace('_', ' ').capitalize()
                 ax.set_title(title)
         self.browser = cube_browser.Browser(confs)
-        self.browser.on_change(None)
+        self.browser._slider_on_change(None)
         # For each PlotControl, assign the plot's mpl_kwargs back to
         # that PlotControl.
         for pc, plot in zip(self.plot_controls, confs):

@@ -32,6 +32,10 @@ iris.FUTURE.netcdf_promote = True
 iris.FUTURE.strict_grib_load = True
 
 
+# Plot axes on-change callback.
+_Callback = namedtuple('Callback', 'func, axes, plots, once')
+
+
 class _AxisAlias(namedtuple('_AxisAlias', 'dim, name, size')):
     def __eq__(self, other):
         result = NotImplemented
@@ -413,9 +417,18 @@ class Plot2D(object):
         emsg = '{!r} requires a draw method for rendering.'
         raise NotImplementedError(emsg.format(type(self).__name__))
 
-    def legend(self, mappable, axes):
-        # http://stackoverflow.com/questions/30030328/correct-placement-of-colorbar-relative-to-geo-axes-cartopy/30077745#30077745
-        pass
+    def __eq__(self, other):
+        result = NotImplemented
+        if isinstance(other, Plot2D):
+            result = id(self) == id(other)
+        return result
+
+    def __ne__(self, other):
+        result = self.__eq__(other)
+        if result is not NotImplemented:
+            result = not result
+        return result
+
 
 
 class Contourf(Plot2D):
@@ -436,16 +449,6 @@ class Contourf(Plot2D):
             self.kwargs['levels'] = self.element.levels
         return self.element
 
-    # XXX: Not sure this should live here!
-    #      Need test coverage!
-    def clear(self):
-        if self.element is not None:
-            for collection in self.element.collections:
-                collection.remove()
-
-    def legend(self, mappable, axes):
-        plt.colorbar(mappable, ax=axes, orientation='horizontal')
-
 
 class Contour(Plot2D):
     """
@@ -464,19 +467,6 @@ class Contour(Plot2D):
         if 'levels' not in self.kwargs:
             self.kwargs['levels'] = self.element.levels
         return self.element
-
-    def clear(self):
-        if self.element is not None:
-            for collection in self.element.collections:
-                collection.remove()
-
-    def legend(self, mappable, axes):
-        plt.colorbar(mappable, ax=axes, orientation='horizontal')
-        # labels = self.kwargs['levels']
-        # for c, l in zip(mappable.collections, labels):
-        #     c.set_label(l)
-        # axes.legend(bbox_to_anchor=(-.2, -.1))
-        # axes.legend(loc='lower left')
 
 
 class Pcolormesh(Plot2D):
@@ -503,13 +493,6 @@ class Pcolormesh(Plot2D):
             self.kwargs['clim'] = self.element.get_clim()
         return self.element
 
-    def clear(self):
-        if self.element is not None:
-            self.element.remove()
-
-    def legend(self, mappable, axes):
-        plt.colorbar(mappable, ax=axes, orientation='horizontal')
-
 
 class Browser(object):
     """
@@ -534,6 +517,12 @@ class Browser(object):
         if not isinstance(plots, Iterable):
             plots = [plots]
         self.plots = plots
+        # Set of all plot axes.
+        self._axes = {plot.axes for plot in plots}
+        # Mapping of coordinate/alias name to callbacks.
+        self._callbacks_by_name = {}
+        # Mappings of axes to callback coordinate/alias names.
+        self._callback_names_by_axes = {}
 
         # Mapping of coordinate/alias name to axis.
         self._axis_by_name = {}
@@ -560,7 +549,7 @@ class Browser(object):
                 pairs = [(i, i) for i in range(axis.size)]
             options = OrderedDict(pairs)
             slider = ipywidgets.SelectionSlider(options=options)
-            slider.observe(self.on_change, names='value')
+            slider.observe(self._slider_on_change, names='value')
             self._slider_by_name[axis.name] = slider
             self._name_by_slider_id[id(slider)] = axis.name
             # Explicitly control the slider label in order to avoid
@@ -579,7 +568,8 @@ class Browser(object):
 
     def display(self):
         # XXX: Ideally, we might want to register an IPython display hook.
-        self.on_change(None)
+        self._slider_on_change(None)
+        
         IPython.display.display(self.form)
 
     def _build_mappings(self):
@@ -635,36 +625,92 @@ class Browser(object):
             else:
                 plot.cache = cache
 
-    def on_change(self, change):
+    def _slider_on_change(self, change):
         """
         Common slider widget traitlet event handler that refreshes
         all appropriate plots given a slider state change.
 
         """
-        def _update(plots, force=False, legend=False):
+        def _update(plots, force=False):
+            axes = set([plot.axes for plot in plots])
             for plot in plots:
-                plot.clear()
-            for plot in plots:
+                if plot.axes in axes:
+                    self._clear(plot.axes)
+                    axes.remove(plot.axes)
                 names = self._names_by_plot_id.get(id(plot))
                 # Check whether we need to force an invariant plot
                 # to render itself.
                 if force and names is None:
                     names = []
                 if names is not None:
-                    kwargs = {name: slider_by_name[name].value
+                    kwargs = {name: self._slider_by_name[name].value
                               for name in names}
-                    # plot(**kwargs)
-                    mappable = plot(**kwargs)
-                    if legend:
-                        plot.legend(mappable, plot.axes)
+                    plot(**kwargs)
 
-        slider_by_name = self._slider_by_name
         if change is None:
             # Initial render of all the plots.
-            _update(self.plots, force=True, legend=True)
+            _update(self.plots, force=True)
+            # The slider names for callbacks.
+            names = set([None])
+            names.update(self._callbacks_by_name)
         else:
             # A widget slider state has changed, so only refresh
             # the appropriate plots.
             slider_id = id(change['owner'])
             name = self._name_by_slider_id[slider_id]
-            _update(self._plots_by_name[name])
+            plots = set(self._plots_by_name[name])
+            # The slider names for callbacks.
+            names = set([None, name])
+            for name in names:
+                callbacks = self._callbacks_by_name.get(name, [])
+                for callback in callbacks:
+                    plots.update(callback.plots)
+            # Update the appropriate plots.
+            _update(plots)
+            axes = set([plot.axes for plot in plots])
+            for ax in axes:
+                names.update(self._callback_names_by_axes.get(ax, []))
+        if self._callbacks_by_name:
+            for name in sorted(names):
+                callbacks = self._callbacks_by_name.get(name, [])
+                for callback in callbacks:
+                    if not callback.once or (change is None and callback.once):
+                        slider = None
+                        if name is not None:
+                            slider = (name, self._slider_by_name[name].value)
+                        plots = callback.plots
+                        if len(plots) == 1:
+                            [plots] = plots
+                        callback.func(callback.axes, plots, slider)
+
+    def _clear(self, axes):
+        # XXX: Also consider axes.artists, axes.patches and axes.legends
+        while len(axes.collections):
+            axes.collections[0].remove()
+        while len(axes.images):
+            axes.images[0].remove()
+        while len(axes.lines):
+            axes.lines[0].remove()
+        while len(axes.texts):
+            axes.texts[0].remove()
+
+    def on_change(self, axes, func, sliders=None, once=False):
+        if axes not in self._axes:
+            emsg = '{!r} cannot observe unknown axes {!r}.'
+            raise ValueError(emsg.format(type(self).__name__, axes))
+        if sliders is None:
+            sliders = [None]
+        else:
+            if isinstance(sliders, six.string_types):
+                sliders = [sliders]
+            for name in sliders:
+                if name not in self._slider_by_name:
+                    emsg = '{!r} has no plots that slide over the axis {!r}.'
+                    raise ValueError(emsg.format(type(self).__name__, name))
+        for name in sliders:
+            plots = [plot for plot in self.plots if plot.axes == axes]
+            callback = _Callback(func=func, axes=axes, plots=plots, once=once)
+            callbacks = self._callbacks_by_name.setdefault(name, [])
+            callbacks.append(callback)
+        names = self._callback_names_by_axes.setdefault(axes, [])
+        names.extend(sliders)
